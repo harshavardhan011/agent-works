@@ -1,7 +1,7 @@
 ---
 description: Wrap local-only edits in LOCAL_CONFIG_START/END markers across changed files so the cleaner can later revert them.
 name: Mark Local Config
-tools: ['runCommands', 'search/codebase', 'edit', 'read/terminalLastCommand']
+tools: ['execuite', 'search/codebase', 'edit', 'read/terminalLastCommand']
 ---
 
 # Mark Local Config agent

@@ -1,7 +1,7 @@
 ---
 description: Dry-run (then optionally apply) the local-config cleaner against a stash.
-mode: agent
-tools: ['runCommands']
+agent: agent
+tools: ['execuite']
 ---
 
 Stash reference to clean against: ${input:stashRef:stash@{0}}
