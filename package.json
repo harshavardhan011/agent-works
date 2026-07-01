@@ -1,0 +1,13 @@
+{
+  "name": "agent-works",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local config cleanup tooling for developer workflows",
+  "scripts": {
+    "clean:config": "node clean-local-config.js",
+    "clean:config:apply": "node clean-local-config.js --apply"
+  },
+  "engines": {
+    "node": ">=14"
+  }
+}
