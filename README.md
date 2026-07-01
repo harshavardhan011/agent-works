@@ -29,19 +29,34 @@ are all recognised.
 
 ```bash
 # 1. Make your local changes, wrapping local-only bits in markers as above.
+#    Do this in the parent repo AND in each submodule where you have local edits.
 
-# 2. Stash everything (the -u captures untracked local-only files too).
+# 2. Stash everything in the parent repo (the -u captures untracked files too).
 git stash -u
+# Then stash in each submodule separately — a parent stash does NOT capture
+# changes inside submodules.
+cd path/to/submodule && git stash -u && cd -
 
-# 3. Dry run — review what will be reverted or deleted.
+# 3. Dry run from the parent repo root — reviews what will be reverted or deleted
+#    across the parent AND all registered submodules.
 node clean-local-config.js
 
 # 4. Apply the changes.
 node clean-local-config.js --apply
 
-# 5. Restore your feature edits (the pop is clean: marked bits are already gone).
+# 5. Restore your feature edits in each repo (the pop is clean: marked bits are
+#    already gone). Run git stash pop in the parent and in each submodule.
 git stash pop
+cd path/to/submodule && git stash pop && cd -
 ```
+
+### Submodules
+
+Each git submodule is an **independent repository** with its own stash list.
+The cleaner automatically discovers all registered submodules (via
+`git submodule foreach --recursive`) and processes each one against its own
+`stash@{0}`. A submodule with no stash is skipped quietly and noted in the
+output. You must stash — and later pop — each submodule yourself.
 
 ### CLI reference
 

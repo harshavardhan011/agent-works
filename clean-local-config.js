@@ -6,6 +6,9 @@
  * local-only untracked files - using a git stash purely as a READ-ONLY
  * reference for "what changed locally".
  *
+ * Works in the parent repo AND in every registered git submodule found
+ * under it. Each repo is inspected independently using its own stash.
+ *
  * GUARDRAILS
  *  - NEVER runs any git command that can modify a stash (no drop/pop/
  *    apply/clear). Only `git stash show` / `git stash list` are used.
@@ -20,10 +23,17 @@
  *    anything to disk or delete anything.
  *
  * USAGE (run from the repo root)
- *   node clean-local-config.js                  dry run vs stash@{0}
- *   node clean-local-config.js stash@{2}         dry run vs a specific stash
+ *   node clean-local-config.js                  dry run vs stash@{0} (root + submodules)
+ *   node clean-local-config.js stash@{2}         dry run vs stash@{2} in root repo only
  *   node clean-local-config.js --apply           actually revert/delete
  *   node clean-local-config.js stash@{1} --apply
+ *
+ * SUBMODULE NOTES
+ *   A parent-repo stash does NOT capture working-tree changes inside a
+ *   submodule. You must run `git stash -u` inside each submodule
+ *   separately. Each submodule is always cleaned against its own
+ *   stash@{0}; only the root repo honours a custom <stash-ref> arg.
+ *   Submodules with no stash are skipped quietly.
  *
  * MARKERS - put these around local-only edits in your files:
  *   // LOCAL_CONFIG_START
@@ -32,21 +42,17 @@
  *
  * WORKFLOW
  *   1. Make your local changes as usual, wrapping local-only bits in
- *      the markers above.
- *   2. git stash -u            (the -u is required to also capture
- *                                untracked local-only files)
+ *      the markers above. Do this in every repo (parent + submodules).
+ *   2. git stash -u            (run in the parent AND each submodule)
  *   3. node clean-local-config.js          (review the dry run)
  *   4. node clean-local-config.js --apply
- *   5. git stash pop           (restore your working copy; only the
- *                                marked/local bits will already be
- *                                gone from tracked files, and the
- *                                untracked files will already be
- *                                deleted, so the pop just restores
- *                                your real feature edits cleanly)
+ *   5. git stash pop           (run in each repo when ready to restore
+ *                                your real feature edits)
  */
 
 const { execSync } = require('child_process');
-const fs = require('fs');
+const path = require('path');
+const fs   = require('fs');
 
 const START_MARKER = /LOCAL_CONFIG_START/;
 const END_MARKER   = /LOCAL_CONFIG_END/;
@@ -61,42 +67,86 @@ const stashRef = args.find(a => a.startsWith('stash@')) || 'stash@{0}';
 //   git stash list / git stash show   (read-only inspection)
 //   git show HEAD:<file>              (read-only)
 //   git status --porcelain            (read-only)
+//   git submodule foreach … echo      (read-only enumeration)
 // There is no code path anywhere in this script that can drop, pop,
 // apply, or clear a stash.
 // -----------------------------------------------------------------------
-function sh(cmd) {
-  return execSync(cmd, { encoding: 'utf8', maxBuffer: 1024 * 1024 * 64 });
+
+/**
+ * Run a shell command synchronously.
+ * @param {string} cmd
+ * @param {string} [cwd] - working directory; defaults to process.cwd()
+ * @returns {string}
+ */
+function sh(cmd, cwd) {
+  return execSync(cmd, {
+    encoding:  'utf8',
+    maxBuffer: 1024 * 1024 * 64,
+    cwd:       cwd || process.cwd(),
+  });
 }
 
-function getStashFiles(ref) {
-  let out;
+// ---- Submodule enumeration -------------------------------------------
+
+/**
+ * Return absolute paths to every initialised submodule root under cwd,
+ * parents-before-children. Returns [] when there are none or on error.
+ * Uses `git submodule foreach --recursive --quiet 'echo "$displaypath"'`
+ * which is purely read-only (the inner command only echoes a path).
+ */
+function getSubmoduleRoots() {
+  try {
+    const out = sh(
+      'git submodule foreach --recursive --quiet "echo \\"$displaypath\\""'
+    );
+    const root = process.cwd();
+    return out
+      .split('\n')
+      .map(l => l.trim())
+      .filter(Boolean)
+      .map(rel => path.resolve(root, rel));
+  } catch (e) {
+    // No submodules, or not a git repo — skip silently.
+    return [];
+  }
+}
+
+// ---- Per-repo git helpers -------------------------------------------
+
+/**
+ * List files in the stash for the given repo root.
+ * Returns an array of { status, file } objects, or null if the stash
+ * doesn't exist / the repo has no stash (caller should skip the repo).
+ */
+function getStashFiles(ref, repoRoot) {
   try {
     // --include-untracked so untracked local-only files are listed too
     // (requires the stash to have been created with `git stash -u`)
-    out = sh(`git stash show --include-untracked --name-status ${ref}`);
+    const out = sh(
+      `git stash show --include-untracked --name-status ${ref}`,
+      repoRoot
+    );
+    return out
+      .split('\n')
+      .map(l => l.trim())
+      .filter(Boolean)
+      .map(l => {
+        const [status, ...rest] = l.split('\t');
+        return { status, file: rest.join('\t') };
+      });
   } catch (e) {
-    console.error(`Could not read ${ref}. Does it exist?`);
-    try { console.error(sh('git stash list')); } catch (e2) {}
-    process.exit(1);
+    return null; // no stash or unreadable — caller will skip this repo
   }
-  return out
-    .split('\n')
-    .map(l => l.trim())
-    .filter(Boolean)
-    .map(l => {
-      const [status, ...rest] = l.split('\t');
-      return { status, file: rest.join('\t') };
-    });
 }
 
-function isUntracked(file) {
-  const out = sh(`git status --porcelain -- "${file}"`);
+function isUntracked(file, repoRoot) {
+  const out = sh(`git status --porcelain -- "${file}"`, repoRoot);
   return out.startsWith('??');
 }
 
-function getHeadContent(file) {
+function getHeadContent(file, repoRoot) {
   try {
-    return sh(`git show HEAD:"${file}"`);
+    return sh(`git show HEAD:"${file}"`, repoRoot);
   } catch (e) {
     return null; // no HEAD version - e.g. a brand new tracked file
   }
@@ -211,16 +261,19 @@ function findMarkerRanges(lines) {
 
 const overlaps = (aS, aE, bS, bE) => aS <= bE && bS <= aE;
 
-function processTrackedFile(file) {
-  const headContent = getHeadContent(file);
+// ---- Per-file processors (now take repoRoot) --------------------------
+
+function processTrackedFile(file, repoRoot) {
+  const headContent = getHeadContent(file, repoRoot);
   if (headContent === null) {
     console.log(`  [skip] ${file}: no HEAD version (new tracked file) - handle manually.`);
     return;
   }
 
-  const rawCurrent    = fs.readFileSync(file, 'utf8');
-  const { lines: oldLines }                                   = splitLines(headContent);
-  const { lines: newLines, eol, trailingNewline }             = splitLines(rawCurrent);
+  const absPath    = path.join(repoRoot, file);
+  const rawCurrent = fs.readFileSync(absPath, 'utf8');
+  const { lines: oldLines }                       = splitLines(headContent);
+  const { lines: newLines, eol, trailingNewline } = splitLines(rawCurrent);
 
   let markerRanges;
   try {
@@ -279,39 +332,68 @@ function processTrackedFile(file) {
   }
 
   // Restore original line endings and trailing-newline behaviour
-  fs.writeFileSync(file, joinLines(rebuilt, eol, trailingNewline), 'utf8');
+  fs.writeFileSync(absPath, joinLines(rebuilt, eol, trailingNewline), 'utf8');
 }
 
-function processUntrackedFile(file) {
-  if (!isUntracked(file)) {
+function processUntrackedFile(file, repoRoot) {
+  if (!isUntracked(file, repoRoot)) {
     console.log(`  [skip] ${file}: listed as new-in-stash but not currently untracked on disk - leaving as-is.`);
     return;
   }
   console.log(`  [delete] ${file}: untracked local-only file`);
-  if (APPLY) fs.unlinkSync(file);
+  if (APPLY) fs.unlinkSync(path.join(repoRoot, file));
 }
 
-function main() {
-  console.log(`Reading ${stashRef} (read-only - this script never modifies stashes)`);
-  const entries = getStashFiles(stashRef);
+// ---- Per-repo runner --------------------------------------------------
 
-  if (entries.length === 0) {
-    console.log('No files found in that stash.');
+function processRepo(label, repoRoot, ref) {
+  console.log(`\n=== ${label} (${repoRoot}) ===`);
+  console.log(`Reading ${ref} (read-only - this script never modifies stashes)`);
+
+  const entries = getStashFiles(ref, repoRoot);
+  if (!entries || entries.length === 0) {
+    console.log(`  [skip repo] no readable stash at ${ref} — continuing`);
     return;
+  }
+
+  for (const { status, file } of entries) {
+    const absPath = path.join(repoRoot, file);
+    if (!fs.existsSync(absPath)) {
+      console.log(`  [skip] ${file}: not present on disk right now.`);
+      continue;
+    }
+    if (status === 'A' || isUntracked(file, repoRoot)) {
+      processUntrackedFile(file, repoRoot);
+    } else {
+      processTrackedFile(file, repoRoot);
+    }
+  }
+}
+
+// ---- Entry point ------------------------------------------------------
+
+function main() {
+  const rootDir = process.cwd();
+
+  // Build the list of repos to process: parent first, then submodules.
+  const repos = [
+    { label: '(root)', root: rootDir, ref: stashRef },
+  ];
+
+  const subRoots = getSubmoduleRoots();
+  for (const sub of subRoots) {
+    const rel = path.relative(rootDir, sub);
+    repos.push({ label: rel, root: sub, ref: 'stash@{0}' });
+  }
+
+  if (subRoots.length > 0) {
+    console.log(`Found ${subRoots.length} submodule(s): ${subRoots.map(s => path.relative(rootDir, s)).join(', ')}`);
   }
 
   console.log(APPLY ? '\nApplying changes:\n' : '\nDRY RUN - pass --apply to actually make changes:\n');
 
-  for (const { status, file } of entries) {
-    if (!fs.existsSync(file)) {
-      console.log(`  [skip] ${file}: not present on disk right now.`);
-      continue;
-    }
-    if (status === 'A' || isUntracked(file)) {
-      processUntrackedFile(file);
-    } else {
-      processTrackedFile(file);
-    }
+  for (const { label, root, ref } of repos) {
+    processRepo(label, root, ref);
   }
 
   if (!APPLY) console.log('\nDry run complete. Re-run with --apply to make these changes.');

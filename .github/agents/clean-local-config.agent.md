@@ -29,16 +29,22 @@ substrings, so `# LOCAL_CONFIG_START` (YAML/Python) or `<!-- LOCAL_CONFIG_START 
 ## Standard workflow (explain this if the user asks)
 
 1. Wrap local-only edits in `LOCAL_CONFIG_START / LOCAL_CONFIG_END` blocks.
-2. `git stash -u`  — captures both tracked edits **and** untracked local-only
-   files. The `-u` flag is required; without it untracked files are not stashed.
-3. Run this agent (or the CLI directly) to revert marked hunks and delete
-   untracked local-only files.
-4. `git stash pop`  — your manual final step to restore real feature edits.
-   The pop is clean because the marked local bits are already gone.
+   Do this in **every** repo — the parent and each submodule — where you have
+   local-only changes.
+2. `git stash -u`  — run this **in the parent AND in each submodule separately**.
+   A parent `git stash -u` does **not** capture changes inside submodules; each
+   submodule is an independent repository with its own stash list.
+3. Run this agent (or the CLI directly) from the parent repo root. The script
+   automatically recurses into every registered submodule and cleans each one
+   against its own `stash@{0}`. Submodules with no stash are skipped quietly.
+4. `git stash pop`  — your manual final step in each repo (parent + each
+   submodule) when you are ready to restore real feature edits. The pop is clean
+   because the marked local bits are already gone.
 
-**The stash is READ-ONLY at all times.** The script never calls `git stash pop`,
-`apply`, `drop`, or `clear`. You must not run those commands either. `git stash pop`
-is always the developer's manual step after they are satisfied with the result.
+**The stash is READ-ONLY at all times in every repo.** The script never calls
+`git stash pop`, `apply`, `drop`, or `clear` — not in the parent, not inside any
+submodule. You must not run those commands either, including via
+`git submodule foreach`. `git stash pop` is always the developer's manual step.
 
 ## How to respond to requests
 

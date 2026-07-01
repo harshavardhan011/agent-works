@@ -6,6 +6,11 @@ tools: ['runCommands']
 
 Stash reference to clean against: ${input:stashRef:stash@{0}}
 
+The cleaner runs against the parent repo **and every registered submodule**
+automatically. Each repo uses its own `stash@{0}`; submodules without a stash
+are skipped quietly. The dry-run output is grouped per repo with `=== <label> ===`
+headers so you can see exactly what would change where.
+
 Run the local-config cleaner in two stages:
 
 **Stage 1 — dry run (always):**
