@@ -1,14 +1,17 @@
 ---
-description: Detect local-only edits in your working changes and wrap them in LOCAL_CONFIG markers (after confirmation).
+description: Wrap every changed hunk (except JSON and untracked files) in LOCAL_CONFIG markers so the cleaner can revert the entire local diff.
 mode: agent
 tools: ['runCommands', 'edit']
 ---
 
 Scope (leave blank for all changed files): ${input:path:(all changed files)}
 
-Inspect my current working-tree changes and wrap any local-only edits in
-`LOCAL_CONFIG_START / LOCAL_CONFIG_END` markers, using the correct comment syntax
-for each file type.
+Inspect my current working-tree changes and wrap **every changed hunk** in every
+modified tracked file in `LOCAL_CONFIG_START / LOCAL_CONFIG_END` markers, using
+the correct comment syntax for each file type.
+
+All current changes are considered local and should not be committed. Do not judge
+whether an edit is machine-specific or feature code — wrap everything changed.
 
 **Step 1 — Inspect changes:**
 
@@ -28,26 +31,30 @@ git -C <submodule-path> diff
 If a `${input:path}` scope was provided, limit your diff to that path.
 
 Separate results into:
-- Modified tracked files — candidates for marker insertion.
+- Modified tracked files — wrap ALL hunks (every changed line/block).
 - Untracked files — **do not tag**; list them as "the cleaner will delete these wholesale."
-- JSON files — **cannot be tagged** (no comment syntax); report them and suggest `.env` or an untracked override file instead.
+- JSON files — **cannot be tagged** (no comment syntax); report them and suggest a `.env` or untracked override file instead.
+- Pure deletions — lines removed locally with no replacement; **cannot be wrapped**; note that these need a manual `git restore <file>` before the cleaner can revert them.
 
-**Step 2 — Identify local-only hunks:**
+**Step 2 — Collect every changed hunk:**
 
-Flag edits that look machine-specific and should not be committed:
-`localhost`/`127.0.0.1`, dev ports, dev/staging URLs, API keys/tokens, personal
-absolute paths, debug/verbose flags, disabled-auth or mock toggles, feature-flag
-overrides. Leave all feature code, bug fixes, refactors, and test changes alone.
-When unsure, **ask** — don't tag.
+For each tracked modified file (excluding JSON), collect **all hunks** from the diff:
+- Added lines → wrap them.
+- Modified lines (inline sub-line edits) → wrap the **entire changed line** (the cleaner reverts the full line to its HEAD version).
+- Pure deletions → cannot be wrapped; include in the skip report.
 
-**Step 3 — Propose and wait for confirmation:**
+Group adjacent hunks into a single marker block when they are close together; use
+separate marker pairs for hunks that are far apart.
 
-Present a clear summary:
-- Which file and line range looks local-only, and why.
+**Step 3 — Propose and confirm:**
+
+Present a concise summary:
+- Which files and hunk/line ranges will be wrapped.
 - Untracked files (listed, not tagged).
 - JSON files (reported, not tagged).
+- Pure deletions (reported, not wrapped).
 
-Then ask: "Should I insert LOCAL_CONFIG markers around these edits?" and **stop**.
+Then ask: "Should I insert LOCAL_CONFIG markers around all these changes?" and **stop**.
 Do not edit any file until I say yes.
 
 **Step 4 — Insert markers on confirmation:**
@@ -61,8 +68,7 @@ Use the correct comment token for each file type:
 - `;` → INI/CFG
 
 Insert `<token> LOCAL_CONFIG_START` immediately before and `<token> LOCAL_CONFIG_END`
-immediately after each confirmed region. Match surrounding indentation. Touch only
-those lines.
+immediately after each hunk. Match surrounding indentation. Touch only those lines.
 
 **Idempotency:** read the file first. If a region is already wrapped in markers,
 skip it — never double-wrap. Verify every `LOCAL_CONFIG_START` is matched by a

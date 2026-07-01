@@ -25,11 +25,17 @@ Developer tooling for managing local configuration overrides in a shared codebas
 
 ## Marking local edits — `mark-local-config`
 
-The **Mark Local Config** agent (or `/mark-local-config` prompt) inspects your
-working-tree diff, identifies edits that look machine-specific (localhost ports,
-dev URLs, personal paths, debug flags, etc.), proposes which hunks to wrap, and —
-after your confirmation — inserts `LOCAL_CONFIG_START / LOCAL_CONFIG_END` markers
-around only those regions. Feature code is never touched.
+The **Mark Local Config** agent (or `/mark-local-config` prompt) is invoked as a
+deliberate one-time action before a stash: it wraps **every changed hunk in every
+modified tracked file** in `LOCAL_CONFIG_START / LOCAL_CONFIG_END` markers — no
+judgement about feature code vs. local config — and after your confirmation inserts
+the correct markers for each file type. JSON files and untracked files are excluded
+(see table below and the Untracked files section).
+
+> **Pure-deletion caveat:** if you locally *deleted* a line (rather than changing
+> or adding one), there is no line to wrap. The cleaner cannot revert pure
+> deletions via markers; revert those manually with `git restore <file>` or copy
+> from the stash before running the cleaner.
 
 ### Comment syntax per file type
 
@@ -146,11 +152,13 @@ node clean-local-config.js stash@{2} --apply
 
 Select **Mark Local Config** from the Copilot Chat agent picker, or type
 `/mark-local-config`. The agent will:
-1. Inspect your working-tree diff and identify local-only edits.
-2. Propose which hunks to wrap (with reasons) and wait for your confirmation.
+1. Inspect your working-tree diff and collect **every changed hunk** across all
+   modified tracked files (added lines, modified lines, inline attribute edits, etc.).
+2. Propose a summary of all hunks to be wrapped and wait for your confirmation.
 3. Insert correctly-syntaxed `LOCAL_CONFIG_START / LOCAL_CONFIG_END` markers
-   around only the confirmed regions.
-4. List untracked files and JSON files (both reported, neither tagged).
+   around every confirmed hunk (whole changed line for inline edits).
+4. List untracked files and JSON files (both reported, neither tagged); report any
+   pure deletions that need manual revert.
 5. Remind you to `git stash -u` next.
 
 > **Files:** `.github/agents/mark-local-config.agent.md` · `.github/prompts/mark-local-config.prompt.md`
