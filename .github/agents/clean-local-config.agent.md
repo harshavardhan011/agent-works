@@ -2,7 +2,6 @@
 description: Safely revert LOCAL_CONFIG-marked local edits and delete stashed untracked files via clean-local-config.js.
 name: Clean Local Config
 tools: ['runCommands', 'search/codebase', 'edit', 'read/terminalLastCommand']
-model: ['Claude Opus 4.5', 'Claude Sonnet 4.6']
 ---
 
 # Clean Local Config agent
