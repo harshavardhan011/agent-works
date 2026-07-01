@@ -4,6 +4,53 @@ Developer tooling for managing local configuration overrides in a shared codebas
 
 ---
 
+## Full round-trip workflow
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│  1. Make local edits (localhost URLs, ports, debug flags, etc.)      │
+│                                                                      │
+│  2. Mark Local Config agent  →  wraps local hunks in markers        │
+│                                                                      │
+│  3. git stash -u  (parent repo + each submodule)                     │
+│                                                                      │
+│  4. Clean Local Config agent  →  reverts marked hunks, deletes       │
+│     untracked files                                                  │
+│                                                                      │
+│  5. git stash pop  (parent + each submodule) to restore feature work │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Marking local edits — `mark-local-config`
+
+The **Mark Local Config** agent (or `/mark-local-config` prompt) inspects your
+working-tree diff, identifies edits that look machine-specific (localhost ports,
+dev URLs, personal paths, debug flags, etc.), proposes which hunks to wrap, and —
+after your confirmation — inserts `LOCAL_CONFIG_START / LOCAL_CONFIG_END` markers
+around only those regions. Feature code is never touched.
+
+### Comment syntax per file type
+
+| File type | Marker format |
+|---|---|
+| JS / TS / Go / Java / C / Rust / Swift / Kotlin | `// LOCAL_CONFIG_START` |
+| Python / YAML / shell / Ruby / TOML / .env | `# LOCAL_CONFIG_START` |
+| HTML / XML / Vue / Svelte / Markdown | `<!-- LOCAL_CONFIG_START -->` |
+| CSS / SCSS / Less | `/* LOCAL_CONFIG_START */` |
+| SQL | `-- LOCAL_CONFIG_START` |
+| INI / CFG | `; LOCAL_CONFIG_START` |
+| **JSON** | **Cannot be tagged — no comment syntax.** Move the value to a `.env` or untracked override file. |
+
+### Untracked files
+
+The cleaner **deletes** untracked local files wholesale — it does not read markers
+inside them. The tagger lists untracked files for awareness but does not insert
+markers.
+
+---
+
 ## `clean-local-config.js`
 
 Reverts machine-specific local edits in tracked files and deletes local-only
@@ -28,7 +75,8 @@ are all recognised.
 ### Recommended workflow
 
 ```bash
-# 1. Make your local changes, wrapping local-only bits in markers as above.
+# 1. Make your local changes. Use the Mark Local Config agent to wrap
+#    local-only bits in markers (or add them by hand using the table above).
 #    Do this in the parent repo AND in each submodule where you have local edits.
 
 # 2. Stash everything in the parent repo (the -u captures untracked files too).
@@ -94,22 +142,28 @@ node clean-local-config.js stash@{2} --apply
 
 ## VS Code Copilot integration
 
-### Custom agent
+### Mark Local Config
 
-Select **Clean Local Config** from the Copilot Chat agent picker (the `@` or
-mode selector). The agent will:
+Select **Mark Local Config** from the Copilot Chat agent picker, or type
+`/mark-local-config`. The agent will:
+1. Inspect your working-tree diff and identify local-only edits.
+2. Propose which hunks to wrap (with reasons) and wait for your confirmation.
+3. Insert correctly-syntaxed `LOCAL_CONFIG_START / LOCAL_CONFIG_END` markers
+   around only the confirmed regions.
+4. List untracked files and JSON files (both reported, neither tagged).
+5. Remind you to `git stash -u` next.
+
+> **Files:** `.github/agents/mark-local-config.agent.md` · `.github/prompts/mark-local-config.prompt.md`
+
+### Clean Local Config
+
+Select **Clean Local Config** from the Copilot Chat agent picker, or type
+`/clean-local-config`. The agent will:
 1. Run a dry run first and summarise what would change.
 2. Ask for your confirmation before passing `--apply`.
 3. Never run `git stash pop` — that remains your manual final step.
 
-> **File:** `.github/agents/clean-local-config.agent.md`
+> **Files:** `.github/agents/clean-local-config.agent.md` · `.github/prompts/clean-local-config.prompt.md`
 
-### Prompt (slash command)
-
-Type `/clean-local-config` in Copilot Chat. VS Code will prompt you for a stash
-reference (default `stash@{0}`), run the dry run, and ask before applying.
-
-> **File:** `.github/prompts/clean-local-config.prompt.md`
-
-Both wrappers enforce the same guardrails as the script: read-only stash, dry-run
-first, apply only on confirmation.
+Both agent pairs enforce read-only stash access, propose-before-edit, and submodule
+awareness. Neither will mutate a stash or make unconfirmed file changes.
