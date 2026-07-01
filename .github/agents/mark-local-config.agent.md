@@ -1,7 +1,7 @@
 ---
 description: Wrap every changed hunk (except JSON and untracked files) in LOCAL_CONFIG_START/END markers so the cleaner can revert the entire local diff.
 name: Mark Local Config
-tools: ['execuite', 'search/codebase', 'edit', 'read/terminalLastCommand']
+tools: ['execute', 'search/codebase', 'edit', 'read/terminalLastCommand']
 ---
 
 # Mark Local Config agent
